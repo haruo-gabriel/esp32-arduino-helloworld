@@ -54,7 +54,7 @@ static void setupHiHatPatch() {
   e.filter_type = FILTER_BPF;
   e.filter_freq_coefs[COEF_CONST] = 11000.0f; // 11 kHz band-pass filter
   e.resonance = 6.0f;             // High resonance for metallic sizzle
-  e.amp_coefs[COEF_CONST] = 0.0f; // Base amplitude is 0
+  e.amp_coefs[COEF_CONST] = 1.0f; // Base amplitude is 1
   e.amp_coefs[COEF_EG0] = 1.0f;   // Amplitude modulated by Envelope 0
 
   // EG0: Rapid exponential decay for a sharp hi-hat sound
@@ -77,7 +77,7 @@ static void setupKickPatch() {
   e.wave = SINE;
 
   // EG0: Amplitude Envelope — exponential decay (180ms)
-  e.amp_coefs[COEF_CONST] = 0.0f; // Base amplitude is 0
+  e.amp_coefs[COEF_CONST] = 1.0f; // Base amplitude is 1
   e.amp_coefs[COEF_EG0] = 1.0f;   // Amplitude modulated by Envelope 0
 
   e.eg0_times[0] = 0;
@@ -109,7 +109,7 @@ static void setupSnarePatch() {
   amy_event e = amy_default_event();
   e.osc = 2;
   e.wave = NOISE;
-  e.amp_coefs[COEF_CONST] = 0.0f; // Base amplitude is 0
+  e.amp_coefs[COEF_CONST] = 1.0f; // Base amplitude is 1
   e.amp_coefs[COEF_EG0] = 1.0f;   // Amplitude modulated by Envelope 0
 
   // EG0: Exponential decay for a snare sound (250ms decay)
