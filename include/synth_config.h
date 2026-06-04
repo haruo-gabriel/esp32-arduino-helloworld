@@ -25,6 +25,7 @@ static constexpr int NUM_VOICES = 8;
 
 // Button GPIO pins (left to right on protoboard)
 static constexpr int BUTTON_PINS[NUM_VOICES] = {15, 16, 17, 18, 8, 3, 46, 9};
+static constexpr int SWITCHER_BUTTON_PIN = 10;
 
 // Double Harmonic Major scale in C (one octave: C4 → C5)
 static constexpr float NOTE_FREQS[NUM_VOICES] = {
