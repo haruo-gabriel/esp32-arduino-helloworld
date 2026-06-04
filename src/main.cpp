@@ -1,58 +1,13 @@
-#include <Arduino.h>
-#include <Oscil.h>
-#include <PmodI2S2.h>
-#include <tables/triangle2048_int8.h>
-
 #include "synth_config.h"
-#include "voice.h"
+#include <AMY-Arduino.h>
+#include <Arduino.h>
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Globals
+// MIDI note mapping for the 8 buttons (matching the frequencies in
+// synth_config.h) C4 (60), Db4 (61), E4 (64), F4 (65), G4 (67), Ab4 (68), B4
+// (71), C5 (72)
 // ─────────────────────────────────────────────────────────────────────────────
-
-// Owns all 8 voices, trigger flags, and the shared envelope level.
-VoiceBank bank;
-
-// Driver for the Pmod I2S2.
-PmodI2S2 pmod;
-
-// Idle LED pulse oscillator — triangle wave at 1 Hz on a 100 Hz update budget.
-Oscil<TRIANGLE2048_NUM_CELLS, SYNTH_CONTROL_RATE> ledOsc(TRIANGLE2048_DATA);
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Audio Task  (Core 1)
-//
-// Fills a stereo-interleaved DMA buffer each cycle. The i2s.write() call
-// blocks naturally when the DMA queue is full, pacing synthesis to the exact
-// DAC sample rate without a sleep loop.
-// ─────────────────────────────────────────────────────────────────────────────
-void audioTask(void * /*parameter*/) {
-  int16_t buffer[AUDIO_BUFFER_SAMPLES * 2]; // Stereo interleaved: L,R,L,R,...
-  int controlCounter = 0;
-
-  while (true) {
-    // ── Trigger handling (once per buffer, not per sample) ────────────────
-    // Button events arrive at ~100 Hz; checking once per buffer (~5.8 ms
-    // latency @ 256 frames) is indistinguishable from per-sample checking.
-    bank.processTriggers();
-
-    // ── Sample generation loop ────────────────────────────────────────────
-    for (int i = 0; i < AUDIO_BUFFER_SAMPLES; i++) {
-      // Advance envelopes at CONTROL_RATE Hz
-      if (++controlCounter >= CTRL_DIVIDER) {
-        controlCounter = 0;
-        bank.updateEnvelopes();
-      }
-
-      int16_t sample = bank.nextSample();
-      buffer[i * 2] = sample;     // Left channel
-      buffer[i * 2 + 1] = sample; // Right channel (mono mix to stereo)
-    }
-
-    // Block until the DMA queue has room; this is the synthesis clock.
-    pmod.write((const uint8_t *)buffer, sizeof(buffer));
-  }
-}
+const uint8_t BUTTON_NOTES[NUM_VOICES] = {60, 61, 64, 65, 67, 68, 71, 72};
 
 // ─────────────────────────────────────────────────────────────────────────────
 // setup()
@@ -60,53 +15,52 @@ void audioTask(void * /*parameter*/) {
 void setup() {
   Serial.begin(115200);
   delay(1000);
-  Serial.println("ESP32-S3 Mozzi ADSR 8-Voice Polyphonic Synth Starting...");
+  Serial.println("ESP32-S3 AMY Synthesizer Starting...");
 
-  // NeoPixel: no pinMode needed with rgbLedWrite; start dark.
+  // NeoPixel Setup: start dark
   rgbLedWrite(LED_PIN, 0, 0, 0);
 
-  // Configure all button pins with internal pull-up resistors.
+  // Configure all button pins with internal pull-up resistors
   for (int i = 0; i < NUM_VOICES; i++) {
     pinMode(BUTTON_PINS[i], INPUT_PULLUP);
     Serial.printf("GPIO %d configured as INPUT_PULLUP\n", BUTTON_PINS[i]);
   }
 
-  // Idle LED pulse at 1 Hz.
-  ledOsc.setFreq(1);
+  // 1. Initialize AMY engine configuration
+  amy_config_t amy_config = amy_default_config();
+  amy_config.i2s_bclk = PIN_SCLK;
+  amy_config.i2s_lrc = PIN_LRCK;
+  amy_config.i2s_dout = PIN_SDIN;
+  amy_config.i2s_mclk = PIN_MCLK;
+  amy_config.i2s_din = -1;
+  amy_config.audio = AMY_AUDIO_IS_I2S;
+  amy_config.features.default_synths =
+      1; // Enable default Juno-6 / GM drum patches
 
-  // Initialise all voices (wave table, frequencies, ADSR shape).
-  bank.init();
+  // 2. Start AMY engine (this launches background rendering task)
+  amy_start(amy_config);
+  Serial.println("AMY synthesis engine started.");
 
-  // Initialise Pmod I2S2 driver: sclk, lrck, dout, din (unused -> -1), mclk,
-  // sample rate.
-  if (pmod.begin(PIN_SCLK, PIN_LRCK, PIN_SDIN, -1, PIN_MCLK,
-                 SYNTH_AUDIO_RATE)) {
-    Serial.println("I2S bus initialised successfully.");
-    xTaskCreatePinnedToCore(audioTask,   // Task function
-                            "audioTask", // Debug name
-                            4096,        // Stack depth (words)
-                            nullptr,     // Parameters
-                            10,      // Priority (high — audio must not glitch)
-                            nullptr, // Task handle (not needed)
-                            1        // Pin to Core 1
-    );
-    Serial.println("Audio task pinned to Core 1.");
-  } else {
-    Serial.println("ERROR: Failed to initialise I2S bus!");
-  }
+  // 3. Reset the engine and initialize Juno voice configuration on channel 1
+  // (synth 1)
+  amy_event e = amy_default_event();
+  e.reset_osc = RESET_AMY;
+  amy_add_event(&e);
+  delay(50); // Let the reset complete
+
+  e = amy_default_event();
+  e.synth = 1;
+  e.patch_number = 0; // Juno-6 patch 0 (rich chorus synth)
+  e.num_voices = 8;
+  amy_add_event(&e);
+  Serial.println("Juno-6 patch 0 allocated with 8 voices on synth 1.");
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// loop()  (Core 0, ~100 Hz)
-//
-// Polls buttons with hardware debouncing and updates the NeoPixel LED.
+// loop() (~100 Hz update rate)
 // ─────────────────────────────────────────────────────────────────────────────
 void loop() {
-  // ── Button state tracking (static locals — no global pollution) ───────────
-  // Three arrays implement a clean debouncer:
-  //   stableState  — the last committed pin level (the "truth")
-  //   pendingState — the level we saw most recently (may still be bouncing)
-  //   pendingTime  — millis() when the pending state first appeared
+  // ── Button state tracking with hardware debouncing ────────────────────────
   static int stableState[NUM_VOICES];
   static int pendingState[NUM_VOICES];
   static unsigned long pendingTime[NUM_VOICES];
@@ -115,8 +69,6 @@ void loop() {
   if (!debounceInit) {
     debounceInit = true;
     for (int i = 0; i < NUM_VOICES; i++) {
-      // INPUT_PULLUP → idle line is HIGH; seed both states to avoid a
-      // spurious noteOff event on the very first loop iteration.
       stableState[i] = HIGH;
       pendingState[i] = HIGH;
       pendingTime[i] = 0;
@@ -124,46 +76,76 @@ void loop() {
   }
 
   const unsigned long now = millis();
+  bool anyButtonPressed = false;
 
   for (int i = 0; i < NUM_VOICES; i++) {
     const int reading = digitalRead(BUTTON_PINS[i]);
 
     if (reading == stableState[i]) {
-      // Pin is back to its committed level — reset any in-flight pending.
       pendingState[i] = reading;
     } else if (reading != pendingState[i]) {
-      // New transition detected — start the debounce timer.
       pendingState[i] = reading;
       pendingTime[i] = now;
     } else if ((now - pendingTime[i]) >= DEBOUNCE_MS) {
-      // The new level has been stable for DEBOUNCE_MS — commit it.
       stableState[i] = reading;
 
+      // Create an event to trigger note on or note off
+      amy_event e = amy_default_event();
+      e.synth = 1;
+      e.midi_note = BUTTON_NOTES[i];
+
       if (reading == LOW) {
-        Serial.printf("Button %d (GPIO %d) pressed  → %.2f Hz\n", i + 1,
-                      BUTTON_PINS[i], NOTE_FREQS[i]);
-        bank.triggerOn(i);
+        Serial.printf("Button %d (GPIO %d) pressed  → MIDI %d (Note On)\n",
+                      i + 1, BUTTON_PINS[i], BUTTON_NOTES[i]);
+        e.velocity = 1.0f;
+        amy_add_event(&e);
       } else {
-        Serial.printf("Button %d (GPIO %d) released → note off\n", i + 1,
-                      BUTTON_PINS[i]);
-        bank.triggerOff(i);
+        Serial.printf("Button %d (GPIO %d) released → MIDI %d (Note Off)\n",
+                      i + 1, BUTTON_PINS[i], BUTTON_NOTES[i]);
+        e.velocity = 0.0f;
+        amy_add_event(&e);
       }
+    }
+
+    if (stableState[i] == LOW) {
+      anyButtonPressed = true;
     }
   }
 
   // ── NeoPixel LED feedback ─────────────────────────────────────────────────
-  // Active: vibrant violet, brightness proportional to the loudest envelope.
-  // Idle:   faint green pulse driven by ledOsc.
-  const uint8_t envVal = bank.maxEnvLevel;
-  if (envVal > 0) {
-    const uint8_t brightness = envVal >> 2;          // Scale 0–255 → 0–63
-    rgbLedWrite(LED_PIN, brightness, 0, brightness); // Violet
+  // Active: vibrant violet, fading out after release.
+  // Idle:   faint green pulse.
+  static float ledBrightness = 0.0f;
+  static uint32_t pulseTime = 0;
+
+  if (anyButtonPressed) {
+    ledBrightness = 63.0f; // Maximum active brightness scale (0-63)
   } else {
-    const int8_t oscVal = ledOsc.next();
-    const uint8_t pulseBright = (uint8_t)(oscVal + 128) >> 4; // 0–15 (faint)
-    rgbLedWrite(LED_PIN, 0, pulseBright, 0);                  // Green pulse
+    ledBrightness -= 0.5f; // Decay speed
+    if (ledBrightness < 0.0f)
+      ledBrightness = 0.0f;
   }
 
-  // Maintain the ~100 Hz loop rate (10 ms per iteration).
+  if (ledBrightness > 0.0f) {
+    rgbLedWrite(LED_PIN, (uint8_t)ledBrightness, 0,
+                (uint8_t)ledBrightness); // Violet
+  } else {
+    // Generate a 1 Hz triangle wave pulse for idle feedback
+    pulseTime++;
+    uint32_t step = pulseTime % 100; // 100 steps per cycle (1 Hz @ 100 Hz loop)
+    float val;
+    if (step < 50) {
+      val = step * 5.1f;
+    } else {
+      val = (100 - step) * 5.1f;
+    }
+    const uint8_t pulseBright = (uint8_t)val >> 4; // Faint green (0-15)
+    rgbLedWrite(LED_PIN, 0, pulseBright, 0);
+  }
+
+  // Call AMY update function to run the sequencer and event queue processing
+  amy_update();
+
+  // Maintain ~100 Hz loop rate
   delay(10);
 }
