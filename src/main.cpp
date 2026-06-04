@@ -96,7 +96,8 @@ void setupSnarePatch() {
   e.amp_coefs[COEF_CONST] = 0.0f; // Base amplitude is 0
   e.amp_coefs[COEF_EG0] = 1.0f;   // Amplitude modulated by Envelope 0
 
-  // EG0: Exponential decay for a snare sound (250ms decay based on example docs)
+  // EG0: Exponential decay for a snare sound (250ms decay based on example
+  // docs)
   e.eg0_times[0] = 0;
   e.eg0_values[0] = 1.0f; // Instant attack (1.0 level)
   e.eg0_times[1] = 250;
@@ -108,7 +109,6 @@ void setupSnarePatch() {
   amy_add_event(&e);
   Serial.println("Synthesized snare patch configured on oscillator 2.");
 }
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // setup()
@@ -211,7 +211,9 @@ void loop() {
       selectedVoice = (selectedVoice + 1) % 3;
       Serial.printf("Switcher (GPIO %d) pressed → Selected Sequencer: %s\n",
                     SWITCHER_BUTTON_PIN,
-                    selectedVoice == 0 ? "KICK" : (selectedVoice == 1 ? "SNARE" : "HI-HAT"));
+                    selectedVoice == 0
+                        ? "KICK"
+                        : (selectedVoice == 1 ? "SNARE" : "HI-HAT"));
 
       // Flash LED to confirm selection
       if (selectedVoice == 0) {
@@ -260,7 +262,7 @@ void loop() {
             e.sequence[SEQUENCE_PERIOD] = 192; // 8 steps * 24 ticks
             e.sequence[SEQUENCE_TICK] = i * 24;
             e.osc = 1; // Trigger kick on oscillator 1
-            e.velocity = 1.0f;
+            e.velocity = KICK_GAIN;
           } else {
             // Setting period and tick to 0 removes the event from the sequencer
             e.sequence[SEQUENCE_PERIOD] = 0;
@@ -281,7 +283,7 @@ void loop() {
             e.sequence[SEQUENCE_PERIOD] = 192; // 8 steps * 24 ticks
             e.sequence[SEQUENCE_TICK] = i * 24;
             e.osc = 2; // Trigger snare on oscillator 2
-            e.velocity = 1.0f;
+            e.velocity = SNARE_GAIN;
           } else {
             // Setting period and tick to 0 removes the event from the sequencer
             e.sequence[SEQUENCE_PERIOD] = 0;
@@ -302,7 +304,7 @@ void loop() {
             e.sequence[SEQUENCE_PERIOD] = 192; // 8 steps * 24 ticks
             e.sequence[SEQUENCE_TICK] = i * 24;
             e.osc = 0; // Trigger hi-hat on oscillator 0
-            e.velocity = 1.0f;
+            e.velocity = HIHAT_GAIN;
           } else {
             // Setting period and tick to 0 removes the event from the sequencer
             e.sequence[SEQUENCE_PERIOD] = 0;

@@ -18,6 +18,12 @@ static constexpr int AUDIO_BUFFER_SAMPLES = 256; // Frames per DMA write
 // ──────────────────────────────────────────────────
 #define DEFAULT_BPM 144.0f
 
+// ── Voice Gain Parameters
+// ──────────────────────────────────────────────────
+#define KICK_GAIN 1.0f
+#define SNARE_GAIN 0.5f
+#define HIHAT_GAIN 0.8f
+
 // ── Hardware: NeoPixel LED
 // ──────────────────────────────────────────────────── Built-in WS2812 on the
 // ESP32-S3-DevKitC-1
