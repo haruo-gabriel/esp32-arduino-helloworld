@@ -1,18 +1,10 @@
 #include "web_server.h"
 #include "synth_config.h"
+#include "drum_machine.h"
 #include <AMY-Arduino.h>
 #include <ESPAsyncWebServer.h>
 #include <LittleFS.h>
 #include <WiFi.h>
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Extern references to sequencer state in main.cpp
-// ─────────────────────────────────────────────────────────────────────────────
-extern bool hihatSteps[NUM_VOICES];
-extern bool kickSteps[NUM_VOICES];
-extern bool snareSteps[NUM_VOICES];
-extern float currentBPM;
-extern volatile uint8_t triggeredStep;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Server & WebSocket instances
@@ -25,6 +17,12 @@ static AsyncWebSocket ws("/ws");
 // ─────────────────────────────────────────────────────────────────────────────
 
 void sendState(AsyncWebSocketClient *client) {
+  const bool* kick = drumMachineGetSteps(0);
+  const bool* snare = drumMachineGetSteps(1);
+  const bool* hihat = drumMachineGetSteps(2);
+  int bpm = (int)drumMachineGetBPM();
+  int step = (int)drumMachineGetStep();
+
   char buf[256];
   snprintf(buf, sizeof(buf),
            "{\"type\":\"state\","
@@ -32,13 +30,13 @@ void sendState(AsyncWebSocketClient *client) {
            "\"snare\":[%d,%d,%d,%d,%d,%d,%d,%d],"
            "\"hihat\":[%d,%d,%d,%d,%d,%d,%d,%d],"
            "\"bpm\":%d,\"step\":%d}",
-           kickSteps[0], kickSteps[1], kickSteps[2], kickSteps[3],
-           kickSteps[4], kickSteps[5], kickSteps[6], kickSteps[7],
-           snareSteps[0], snareSteps[1], snareSteps[2], snareSteps[3],
-           snareSteps[4], snareSteps[5], snareSteps[6], snareSteps[7],
-           hihatSteps[0], hihatSteps[1], hihatSteps[2], hihatSteps[3],
-           hihatSteps[4], hihatSteps[5], hihatSteps[6], hihatSteps[7],
-           (int)currentBPM, (int)triggeredStep);
+           kick ? kick[0] : 0, kick ? kick[1] : 0, kick ? kick[2] : 0, kick ? kick[3] : 0,
+           kick ? kick[4] : 0, kick ? kick[5] : 0, kick ? kick[6] : 0, kick ? kick[7] : 0,
+           snare ? snare[0] : 0, snare ? snare[1] : 0, snare ? snare[2] : 0, snare ? snare[3] : 0,
+           snare ? snare[4] : 0, snare ? snare[5] : 0, snare ? snare[6] : 0, snare ? snare[7] : 0,
+           hihat ? hihat[0] : 0, hihat ? hihat[1] : 0, hihat ? hihat[2] : 0, hihat ? hihat[3] : 0,
+           hihat ? hihat[4] : 0, hihat ? hihat[5] : 0, hihat ? hihat[6] : 0, hihat ? hihat[7] : 0,
+           bpm, step);
   if (client) {
     client->text(buf);
   } else {
@@ -51,9 +49,6 @@ void sendPlayhead(uint8_t step) {
   snprintf(buf, sizeof(buf), "{\"type\":\"step\",\"index\":%d}", step);
   ws.textAll(buf);
 }
-
-// Defined in main.cpp — updates an AMY sequencer event for a given voice/step
-extern void updateAmyStep(int voiceType, int step, bool active);
 
 // ─────────────────────────────────────────────────────────────────────────────
 // WebSocket event handler
@@ -84,14 +79,9 @@ static void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
         if (vi >= 0 && si >= 0) {
           int voice = msg.substring(vi + 8).toInt();
           int step = msg.substring(si + 7).toInt();
-          if (step >= 0 && step < NUM_VOICES) {
-            bool *steps = (voice == 0) ? kickSteps
-                          : (voice == 1) ? snareSteps
-                                         : hihatSteps;
-            steps[step] = !steps[step];
-            updateAmyStep(voice, step, steps[step]);
-            Serial.printf("WS toggle: voice=%d step=%d → %s\n", voice, step,
-                          steps[step] ? "ON" : "OFF");
+          if (step >= 0 && step < NUM_STEPS) {
+            drumMachineToggleStep(voice, step);
+            Serial.printf("WS toggle: voice=%d step=%d\n", voice, step);
             sendState(); // Broadcast to all clients
           }
         }
@@ -102,10 +92,7 @@ static void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
         if (vi >= 0) {
           int bpm = msg.substring(vi + 8).toInt();
           if (bpm >= 60 && bpm <= 600) {
-            currentBPM = (float)bpm;
-            amy_event e = amy_default_event();
-            e.tempo = currentBPM;
-            amy_add_event(&e);
+            drumMachineSetBPM((float)bpm);
             Serial.printf("WS BPM changed to %d\n", bpm);
             sendState(); // Broadcast new BPM
           }
@@ -144,3 +131,7 @@ void setupWebServer() {
 }
 
 void cleanupWebSocket() { ws.cleanupClients(); }
+
+void handleDrumMachineStateChange() {
+  sendState();
+}

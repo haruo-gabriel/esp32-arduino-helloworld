@@ -17,3 +17,6 @@ void sendState(AsyncWebSocketClient *client = nullptr);
 
 // Broadcast current playhead step to all clients
 void sendPlayhead(uint8_t step);
+
+// Callback wrapper for drum machine state updates
+void handleDrumMachineStateChange();

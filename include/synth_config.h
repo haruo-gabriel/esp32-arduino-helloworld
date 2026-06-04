@@ -37,14 +37,14 @@ static constexpr int PIN_SDIN = 7; // Audio stream out to DAC
 
 // ── Voice & Button Mapping
 // ────────────────────────────────────────────────────
-static constexpr int NUM_VOICES = 8;
+static constexpr int NUM_STEPS = 8;
 
 // Button GPIO pins (left to right on protoboard)
-static constexpr int BUTTON_PINS[NUM_VOICES] = {15, 16, 17, 18, 8, 3, 46, 9};
+static constexpr int BUTTON_PINS[NUM_STEPS] = {15, 16, 17, 18, 8, 3, 46, 9};
 static constexpr int SWITCHER_BUTTON_PIN = 10;
 
 // Double Harmonic Major scale in C (one octave: C4 → C5)
-static constexpr float NOTE_FREQS[NUM_VOICES] = {
+static constexpr float NOTE_FREQS[NUM_STEPS] = {
     261.63f, // C4
     277.18f, // Db4
     329.63f, // E4
