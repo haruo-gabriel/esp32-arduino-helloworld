@@ -73,7 +73,7 @@ void setupKickPatch() {
   // Pitch starts at +3.5 octaves (e.g. 45 Hz * 2^3.5 = 509 Hz) and drops to 45
   // Hz
   e.freq_coefs[COEF_CONST] = 45.0f; // Base frequency 45 Hz
-  e.freq_coefs[COEF_EG1] = 6.0f;    // Pitch sweep depth: +3.5 octaves
+  e.freq_coefs[COEF_EG1] = 2.0f;    // Pitch sweep depth: +3.5 octaves
 
   e.eg1_times[0] = 0;
   e.eg1_values[0] = 1.0f; // Start at max pitch sweep
