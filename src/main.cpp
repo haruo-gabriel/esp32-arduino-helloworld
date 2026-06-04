@@ -9,23 +9,42 @@
 // On the ESP32-S3-DevKitC-1, the built-in NeoPixel is on GPIO 38.
 #define LED_PIN 38
 
-// Single Button GPIO Pin Definition
-#define BTN_PIN 15
+// Button GPIO Pin Definitions (from left to right in my protoboard)
+#define BTN_1 15
+#define BTN_2 16
+#define BTN_3 17
+#define BTN_4 18
+#define BTN_5 8 
+#define BTN_6 3 
+#define BTN_7 46 
+#define BTN_9 9
 
-// Frequency for the note C4
-const float NOTE_FREQ = 261.63f;
+// Frequencies for notes (C4, E4, G4, C5)
+#define NOTE_C4_FREQ 261.63f
+#define NOTE_E4_FREQ 329.63f
+#define NOTE_G4_FREQ 392.00f
+#define NOTE_C5_FREQ 523.25f
 
-// Instantiate a Mozzi oscillator running at 100 Hz update rate for the idle LED
-// pulse.
+// Map arrays for pins and frequencies
+const int buttonPins[4] = {BTN_1, BTN_2, BTN_3, BTN_4};
+const float noteFreqs[4] = {NOTE_C4_FREQ, NOTE_E4_FREQ, NOTE_G4_FREQ, NOTE_C5_FREQ};
+
+// Struct to represent a synthesizer voice
+struct Voice {
+  Oscil<SIN2048_NUM_CELLS, 44100> osc;
+  ADSR<100, 44100> env;
+};
+
+// Instantiate 4 voices with the sine wavetable
+Voice voices[4] = {
+  { Oscil<SIN2048_NUM_CELLS, 44100>(SIN2048_DATA) },
+  { Oscil<SIN2048_NUM_CELLS, 44100>(SIN2048_DATA) },
+  { Oscil<SIN2048_NUM_CELLS, 44100>(SIN2048_DATA) },
+  { Oscil<SIN2048_NUM_CELLS, 44100>(SIN2048_DATA) }
+};
+
+// Instantiate a Mozzi oscillator running at 100 Hz update rate for the idle LED pulse.
 Oscil<SIN2048_NUM_CELLS, 100> ledOsc(SIN2048_DATA);
-
-// Instantiate a Mozzi oscillator running at 44100 Hz update rate for audio
-// output.
-Oscil<SIN2048_NUM_CELLS, 44100> audioOsc(SIN2048_DATA);
-
-// Instantiate an ADSR envelope. Control update rate = 100Hz, Audio
-// interpolation rate = 44100Hz.
-ADSR<100, 44100> envelope;
 
 // I2S Class instance for the audio bus
 I2SClass i2s;
@@ -37,9 +56,8 @@ const int pin_sclk = 6;
 const int pin_sdin = 7; // Digital synth audio stream out to the Pmod DAC
 
 // Thread-safe communication flags
-volatile float targetFreq = NOTE_FREQ;
-volatile bool triggerNoteOn = false;
-volatile bool triggerNoteOff = false;
+volatile bool voiceTriggerOn[4] = {false, false, false, false};
+volatile bool voiceTriggerOff[4] = {false, false, false, false};
 volatile uint8_t currentEnvLevel = 0;
 
 // Background FreeRTOS task to synthesize audio samples in real-time
@@ -51,14 +69,16 @@ void audioTask(void *parameter) {
   while (true) {
     for (int i = 0; i < numSamples; i++) {
       // Execute thread-safe synth control triggers
-      if (triggerNoteOn) {
-        triggerNoteOn = false;
-        audioOsc.setFreq(targetFreq);
-        envelope.noteOn(true); // reset envelope to 0 on trigger
-      }
-      if (triggerNoteOff) {
-        triggerNoteOff = false;
-        envelope.noteOff();
+      for (int v = 0; v < 4; v++) {
+        if (voiceTriggerOn[v]) {
+          voiceTriggerOn[v] = false;
+          voices[v].osc.setFreq(noteFreqs[v]);
+          voices[v].env.noteOn(true); // reset envelope to 0 on trigger
+        }
+        if (voiceTriggerOff[v]) {
+          voiceTriggerOff[v] = false;
+          voices[v].env.noteOff();
+        }
       }
 
       // Update control rate elements (envelope update) at 100 Hz.
@@ -66,18 +86,27 @@ void audioTask(void *parameter) {
       controlCounter++;
       if (controlCounter >= 441) {
         controlCounter = 0;
-        envelope.update();
+        for (int v = 0; v < 4; v++) {
+          voices[v].env.update();
+        }
       }
 
-      // Synthesize sine wave sample (-128 to 127) and multiply by envelope
-      // value (0 to 255)
-      int16_t oscSample = audioOsc.next();
-      uint8_t envLevel = envelope.next();
-      currentEnvLevel = envLevel; // share envelope level with LED visualizer
+      // Synthesize and sum the active voices
+      int32_t summedSample = 0;
+      uint8_t maxEnv = 0;
+      
+      for (int v = 0; v < 4; v++) {
+        int16_t oscSample = voices[v].osc.next();
+        uint8_t envLevel = voices[v].env.next();
+        summedSample += (int32_t)oscSample * envLevel;
+        if (envLevel > maxEnv) {
+          maxEnv = envLevel;
+        }
+      }
+      currentEnvLevel = maxEnv; // Share maximum envelope level with LED visualizer
 
-      // Scale by 150 to match original output level config, divided by 256 for
-      // envelope range scaling
-      int16_t sampleVal = (int16_t)(((int32_t)oscSample * envLevel * 150) >> 8);
+      // Scale by 60 to prevent clipping when multiple keys are pressed, divided by 256 for envelope scaling
+      int16_t sampleVal = (int16_t)((summedSample * 60) >> 8);
 
       buffer[i * 2] = sampleVal;     // Left Channel
       buffer[i * 2 + 1] = sampleVal; // Right Channel
@@ -92,32 +121,32 @@ void setup() {
   // Initialize Serial for hardware debugging
   Serial.begin(115200);
   delay(1000); // Give serial monitor time to connect
-  Serial.println("ESP32-S3 Mozzi ADSR Synth Starting...");
+  Serial.println("ESP32-S3 Mozzi ADSR Polyphonic Synth Starting...");
 
   // WS2812 does not require pinMode configuration when using rgbLedWrite
   rgbLedWrite(LED_PIN, 0, 0, 0); // Start turned off
 
-  // Setup single button input with internal pull-up resistor
-  pinMode(BTN_PIN, INPUT_PULLUP);
-  Serial.printf("GPIO %d configured as INPUT_PULLUP\n", BTN_PIN);
+  // Setup button inputs with internal pull-up resistors
+  for (int i = 0; i < 4; i++) {
+    pinMode(buttonPins[i], INPUT_PULLUP);
+    Serial.printf("GPIO %d configured as INPUT_PULLUP\n", buttonPins[i]);
+  }
 
   // Initialize the LED oscillator at 1 Hz frequency (1 cycle per second)
   ledOsc.setFreq(1);
 
-  // Initialize the audio oscillator frequency
-  audioOsc.setFreq(NOTE_FREQ);
-
-  // Set envelope Attack, Decay, Sustain, and Release parameters
-  // Attack: 40ms, Decay: 120ms, Sustain Level: 200 (out of 255), Release: 250ms
-  envelope.setTimes(40, 120, 50000, 250);
-  envelope.setADLevels(255, 200);
+  // Set envelope parameters and frequencies for all voices
+  for (int v = 0; v < 4; v++) {
+    voices[v].osc.setFreq(noteFreqs[v]);
+    voices[v].env.setTimes(40, 120, 50000, 250);
+    voices[v].env.setADLevels(255, 200);
+  }
 
   // Setup I2S pins: bclk, ws, dout, din (-1), mclk
   i2s.setPins(pin_sclk, pin_lrck, pin_sdin, -1, pin_mclk);
 
   // Initialize the I2S bus at 44.1 kHz, 16-bit per sample, Stereo
-  if (i2s.begin(I2S_MODE_STD, 44100, I2S_DATA_BIT_WIDTH_16BIT,
-                I2S_SLOT_MODE_STEREO)) {
+  if (i2s.begin(I2S_MODE_STD, 44100, I2S_DATA_BIT_WIDTH_16BIT, I2S_SLOT_MODE_STEREO)) {
     Serial.println("I2S Bus successfully initialized!");
     // Create the background audio synthesis task on Core 1
     xTaskCreatePinnedToCore(audioTask,   // Function implementing the task
@@ -134,27 +163,28 @@ void setup() {
   }
 }
 
-int lastPinState = -1;
+int lastButtonStates[4] = {-1, -1, -1, -1};
 
 void loop() {
-  // Read button state (active-LOW)
-  int currentPinState = digitalRead(BTN_PIN);
+  // Poll each button state
+  for (int i = 0; i < 4; i++) {
+    int currentPinState = digitalRead(buttonPins[i]);
 
-  if (currentPinState != lastPinState) {
-    if (currentPinState == LOW) {
-      Serial.println("Button pressed: Triggering note C4!");
-      triggerNoteOn = true;
-    } else {
-      Serial.println("Button released: Releasing note!");
-      triggerNoteOff = true;
+    if (currentPinState != lastButtonStates[i]) {
+      if (currentPinState == LOW) {
+        Serial.printf("Button %d (GPIO %d) pressed: Triggering note freq %f Hz!\n", i + 1, buttonPins[i], noteFreqs[i]);
+        voiceTriggerOn[i] = true;
+      } else {
+        Serial.printf("Button %d (GPIO %d) released: Releasing note!\n", i + 1, buttonPins[i]);
+        voiceTriggerOff[i] = true;
+      }
+      lastButtonStates[i] = currentPinState;
     }
-    lastPinState = currentPinState;
   }
 
   // Visual LED Feedback:
   // - Faint pulsing green when idle.
-  // - Vibrant magenta/violet proportional to the envelope level when a note is
-  // active.
+  // - Vibrant magenta/violet proportional to the envelope level when a note is active.
   uint8_t envVal = currentEnvLevel;
   if (envVal > 0) {
     uint8_t glowBrightness = envVal >> 2; // Scale 0-255 down to 0-63
