@@ -1,0 +1,6 @@
+{
+    "clangd.arguments": [
+        "--compile-commands-dir=/home/haruo/Documents/PlatformIO/Projects/esp32-arduino-helloworld/.cache/clangd",
+        "--query-driver=/home/haruo/.platformio/packages/toolchain-*/bin/*,/home/haruo/.platformio/packages/tool-*/bin/*"
+    ]
+}
