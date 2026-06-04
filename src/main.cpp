@@ -135,11 +135,11 @@ void setup() {
   setupHiHatPatch();
   setupKickPatch();
 
-  // 4. Set the AMY sequencer tempo to 120 BPM
+  // 4. Set the AMY sequencer tempo using the defined BPM
   e = amy_default_event();
-  e.tempo = 120.0f;
+  e.tempo = DEFAULT_BPM;
   amy_add_event(&e);
-  Serial.println("Sequencer tempo configured to 120 BPM.");
+  Serial.printf("Sequencer tempo configured to %.1f BPM.\n", DEFAULT_BPM);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
