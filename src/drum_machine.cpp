@@ -2,15 +2,13 @@
 #include <Arduino.h>
 #include <AMY-Arduino.h>
 
-extern void safe_amy_add_event(amy_event *e);
-
 // ─────────────────────────────────────────────────────────────────────────────
 // Drum Machine Private State
 // ─────────────────────────────────────────────────────────────────────────────
 static DrumVoice voices[] = {
-    { "kick", 1, 8, KICK_GAIN, {false, false, false, false, false, false, false, false} },
-    { "snare", 2, 16, SNARE_GAIN, {false, false, false, false, false, false, false, false} },
-    { "hihat", 0, 0, HIHAT_GAIN, {false, false, false, false, false, false, false, false} }
+    { "kick", 1, 8, KICK_GAIN, {true, false, false, false, true, false, false, false} },
+    { "snare", 2, 16, SNARE_GAIN, {false, false, true, false, false, false, true, false} },
+    { "hihat", 0, 0, HIHAT_GAIN, {true, false, true, false, true, false, true, false} }
 };
 static const uint8_t NUM_DRUM_VOICES = sizeof(voices) / sizeof(voices[0]);
 
@@ -25,6 +23,25 @@ static uint8_t selectedVoice = 0;
 static float ledR = 0.0f;
 static float ledG = 0.0f;
 static float ledB = 0.0f;
+
+static void flashSelectedVoiceLED() {
+  if (selectedVoice == 0) {
+    // High red/orange flash for Kick selection
+    ledR = 150.0f;
+    ledG = 0.0f;
+    ledB = 0.0f;
+  } else if (selectedVoice == 1) {
+    // High green flash for Snare selection
+    ledR = 0.0f;
+    ledG = 150.0f;
+    ledB = 0.0f;
+  } else {
+    // High blue/purple flash for Hi-Hat selection
+    ledR = 20.0f;
+    ledG = 0.0f;
+    ledB = 150.0f;
+  }
+}
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AMY patch recipes
@@ -49,7 +66,7 @@ static void setupHiHatPatch() {
   e.eg0_values[2] = 0.0f; // End breakpoint
   e.bp_is_set[0] = 1;     // Enable EG0
 
-  safe_amy_add_event(&e);
+  amy_add_event(&e);
   Serial.println("Synthesized hi-hat patch configured on oscillator 0.");
 
 }
@@ -83,7 +100,7 @@ static void setupKickPatch() {
   e.eg1_values[2] = 0.0f; // End breakpoint
   e.bp_is_set[1] = 1;     // Enable EG1
 
-  safe_amy_add_event(&e);
+  amy_add_event(&e);
   Serial.println("Synthesized kick patch configured on oscillator 1.");
 
 }
@@ -104,7 +121,7 @@ static void setupSnarePatch() {
   e.eg0_values[2] = 0.0f; // End breakpoint
   e.bp_is_set[0] = 1;     // Enable EG0
 
-  safe_amy_add_event(&e);
+  amy_add_event(&e);
   Serial.println("Synthesized snare patch configured on oscillator 2.");
 
 }
@@ -126,7 +143,7 @@ static void updateAmyStepInternal(uint8_t voiceIdx, uint8_t step, bool active) {
     e.sequence[SEQUENCE_PERIOD] = 0;
     e.sequence[SEQUENCE_TICK] = 0;
   }
-  safe_amy_add_event(&e);
+  amy_add_event(&e);
 }
 
 
@@ -134,6 +151,11 @@ static void updateAmyStepInternal(uint8_t voiceIdx, uint8_t step, bool active) {
 // AMY sequencer hook callback (called from hardware timer ISR context)
 // ─────────────────────────────────────────────────────────────────────────────
 void my_sequencer_hook(uint32_t tick_count) {
+  static uint32_t lastPrint = 0;
+  if (tick_count - lastPrint >= 48) { // print once per second (approx)
+    lastPrint = tick_count;
+    Serial.printf("my_sequencer_hook called with tick_count: %u\n", tick_count);
+  }
   // Each step represents an 8th note.
   // At 48 PPQ (ticks per quarter note), an 8th note is 24 ticks.
   // The total period for 8 steps is 8 * 24 = 192 ticks.
@@ -166,7 +188,7 @@ void drumMachineInit(StateChangeCb onState, PlayheadTickCb onTick) {
   // Reset the engine and initialize patch configurations
   amy_event e = amy_default_event();
   e.reset_osc = RESET_AMY;
-  safe_amy_add_event(&e);
+  amy_add_event(&e);
   delay(50); // Let the reset complete
 
   setupHiHatPatch();
@@ -176,9 +198,17 @@ void drumMachineInit(StateChangeCb onState, PlayheadTickCb onTick) {
   // Set the AMY sequencer tempo using the defined BPM
   e = amy_default_event();
   e.tempo = currentBPM;
-  safe_amy_add_event(&e);
+  amy_add_event(&e);
   Serial.printf("Sequencer tempo configured to %.1f BPM.\n", currentBPM);
 
+  // Schedule any initially active steps in the AMY sequencer
+  for (uint8_t v = 0; v < NUM_DRUM_VOICES; v++) {
+    for (uint8_t s = 0; s < NUM_STEPS; s++) {
+      if (voices[v].steps[s]) {
+        updateAmyStepInternal(v, s, true);
+      }
+    }
+  }
 }
 
 void drumMachineUpdate() {
@@ -223,22 +253,7 @@ void drumMachineUpdate() {
                     voices[selectedVoice].name);
 
       // Flash LED to confirm selection
-      if (selectedVoice == 0) {
-        // High red/orange flash for Kick selection
-        ledR = 150.0f;
-        ledG = 0.0f;
-        ledB = 0.0f;
-      } else if (selectedVoice == 1) {
-        // High green flash for Snare selection
-        ledR = 0.0f;
-        ledG = 150.0f;
-        ledB = 0.0f;
-      } else {
-        // High blue/purple flash for Hi-Hat selection
-        ledR = 20.0f;
-        ledG = 0.0f;
-        ledB = 150.0f;
-      }
+      flashSelectedVoiceLED();
 
       if (stateChangeCallback) {
         stateChangeCallback();
@@ -350,7 +365,7 @@ void drumMachineSetBPM(float bpm) {
     currentBPM = bpm;
     amy_event e = amy_default_event();
     e.tempo = currentBPM;
-    safe_amy_add_event(&e);
+    amy_add_event(&e);
   }
 
 }
@@ -389,19 +404,7 @@ void drumMachineSetSelectedVoice(uint8_t voice) {
   if (voice < NUM_DRUM_VOICES) {
     selectedVoice = voice;
     // Flash LED to confirm selection
-    if (selectedVoice == 0) {
-      ledR = 150.0f;
-      ledG = 0.0f;
-      ledB = 0.0f;
-    } else if (selectedVoice == 1) {
-      ledR = 0.0f;
-      ledG = 150.0f;
-      ledB = 0.0f;
-    } else {
-      ledR = 20.0f;
-      ledG = 0.0f;
-      ledB = 150.0f;
-    }
+    flashSelectedVoiceLED();
     if (stateChangeCallback) {
       stateChangeCallback();
     }

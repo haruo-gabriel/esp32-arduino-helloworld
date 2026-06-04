@@ -1,18 +1,9 @@
 #pragma once
 #include <stdint.h>
 
-// ── Audio & Control Rates
+// ── Audio Rates
 // ─────────────────────────────────────────────────────
 static constexpr int SYNTH_AUDIO_RATE = 44100; // Hz — I2S sample rate
-static constexpr int SYNTH_CONTROL_RATE =
-    100; // Hz — Mozzi control/envelope update rate
-// Number of audio samples between each control-rate update (441 @ 44.1 kHz /
-// 100 Hz)
-static constexpr int CTRL_DIVIDER = SYNTH_AUDIO_RATE / SYNTH_CONTROL_RATE;
-
-// ── Audio Buffer
-// ──────────────────────────────────────────────────────────────
-static constexpr int AUDIO_BUFFER_SAMPLES = 256; // Frames per DMA write
 
 // ── Sequencer Configurations
 // ──────────────────────────────────────────────────
@@ -43,34 +34,6 @@ static constexpr int NUM_STEPS = 8;
 static constexpr int BUTTON_PINS[NUM_STEPS] = {15, 16, 17, 18, 8, 3, 46, 9};
 static constexpr int SWITCHER_BUTTON_PIN = 10;
 
-// Double Harmonic Major scale in C (one octave: C4 → C5)
-static constexpr float NOTE_FREQS[NUM_STEPS] = {
-    261.63f, // C4
-    277.18f, // Db4
-    329.63f, // E4
-    349.23f, // F4
-    392.00f, // G4
-    415.30f, // Ab4
-    493.88f, // B4
-    523.25f, // C5
-};
-
-// ── Envelope (ADSR) Parameters
-// ────────────────────────────────────────────────
-static constexpr unsigned int ENV_ATTACK_MS = 40;
-static constexpr unsigned int ENV_DECAY_MS = 120;
-static constexpr unsigned int ENV_SUSTAIN_MS = 50000;
-static constexpr unsigned int ENV_RELEASE_MS = 250;
-static constexpr uint8_t ENV_ATTACK_LEVEL = 255;
-static constexpr uint8_t ENV_DECAY_LEVEL = 200;
-
-// ── Synthesis Mix
-// ───────────────────────────────────────────────────────────── Post-mix gain
-// applied before the 8-bit envelope normalization (>> ENV_SHIFT). A value of 30
-// prevents clipping when all 8 voices play simultaneously.
-static constexpr int MIX_GAIN = 30;
-static constexpr int ENV_SHIFT =
-    8; // Right-shift amount to normalize 8-bit envelope (÷256)
 
 // ── Button Debounce
 // ─────────────────────────────────────────────────────────── Minimum duration

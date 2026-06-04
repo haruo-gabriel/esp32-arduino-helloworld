@@ -4,34 +4,19 @@
 #include "PmodI2S2.h"
 #include <AMY-Arduino.h>
 #include <Arduino.h>
-#include <freertos/semphr.h>
 
 static PmodI2S2 pmod;
-SemaphoreHandle_t amy_mutex = NULL;
-
-// Thread-safe wrapper for adding events to the AMY queue
-void safe_amy_add_event(amy_event *e) {
-  if (amy_mutex) {
-    if (xSemaphoreTake(amy_mutex, portMAX_DELAY) == pdTRUE) {
-      amy_add_event(e);
-      xSemaphoreGive(amy_mutex);
-    }
-  } else {
-    amy_add_event(e);
-  }
-}
 
 // Background task on Core 1 to render AMY audio and stream to I2S DAC
 void audioTask(void *parameter) {
+  static int32_t outputBuffer[AMY_BLOCK_SIZE * AMY_NCHANS];
   while (true) {
-    int16_t *block = NULL;
-    if (amy_mutex && xSemaphoreTake(amy_mutex, portMAX_DELAY) == pdTRUE) {
-      block = amy_simple_fill_buffer();
-      xSemaphoreGive(amy_mutex);
-    }
-
+    int16_t *block = amy_simple_fill_buffer();
     if (block) {
-      pmod.write((const uint8_t *)block, AMY_BLOCK_SIZE * AMY_NCHANS * sizeof(int16_t));
+      for (int i = 0; i < AMY_BLOCK_SIZE * AMY_NCHANS; i++) {
+        outputBuffer[i] = ((int32_t)block[i]) << 16;
+      }
+      pmod.write((const uint8_t *)outputBuffer, AMY_BLOCK_SIZE * AMY_NCHANS * sizeof(int32_t));
     }
   }
 }
@@ -47,8 +32,6 @@ void setup() {
   }
   Serial.println("\nESP32-S3 AMY Sequencer Starting...");
 
-  // Initialize the AMY thread-safety mutex
-  amy_mutex = xSemaphoreCreateMutex();
 
   // NeoPixel Setup: start dark
   rgbLedWrite(LED_PIN, 0, 0, 0);
@@ -58,7 +41,7 @@ void setup() {
   setupWebServer();
 
   // 1. Initialize Pmod I2S2 DAC
-  if (!pmod.begin(PIN_SCLK, PIN_LRCK, PIN_SDIN, -1, PIN_MCLK, SYNTH_AUDIO_RATE)) {
+  if (!pmod.begin(PIN_SCLK, PIN_LRCK, PIN_SDIN, -1, PIN_MCLK, SYNTH_AUDIO_RATE, I2S_DATA_BIT_WIDTH_32BIT)) {
     Serial.println("Failed to initialize Pmod I2S2!");
   } else {
     Serial.println("Pmod I2S2 initialized successfully.");
@@ -75,7 +58,7 @@ void setup() {
 
   // Optimize AMY memory configuration to free internal SRAM for the web server/WiFi
   amy_config.max_oscs = 16;
-  amy_config.max_sequencer_tags = 16;
+  amy_config.max_sequencer_tags = 32;
   amy_config.max_voices = 8;
   amy_config.max_synths = 8;
   amy_config.max_memory_patches = 4;
