@@ -4,7 +4,7 @@
 // Mozzi headers for synthesis
 #include <ADSR.h>
 #include <Oscil.h>
-#include <tables/sin2048_int8.h>
+#include <tables/triangle2048_int8.h>
 
 // On the ESP32-S3-DevKitC-1, the built-in NeoPixel is on GPIO 38.
 #define LED_PIN 38
@@ -38,7 +38,7 @@ const float noteFreqs[NUM_VOICES] = {NOTE_C4_FREQ, NOTE_DB4_FREQ, NOTE_E4_FREQ, 
 
 // Struct to represent a synthesizer voice
 struct Voice {
-  Oscil<SIN2048_NUM_CELLS, 44100> osc;
+  Oscil<TRIANGLE2048_NUM_CELLS, 44100> osc;
   ADSR<100, 44100> env;
 };
 
@@ -46,7 +46,7 @@ struct Voice {
 Voice voices[NUM_VOICES];
 
 // Instantiate a Mozzi oscillator running at 100 Hz update rate for the idle LED pulse.
-Oscil<SIN2048_NUM_CELLS, 100> ledOsc(SIN2048_DATA);
+Oscil<TRIANGLE2048_NUM_CELLS, 100> ledOsc(TRIANGLE2048_DATA);
 
 // I2S Class instance for the audio bus
 I2SClass i2s;
@@ -139,7 +139,7 @@ void setup() {
 
   // Initialize wave table, frequencies, and envelope parameters for all voices
   for (int v = 0; v < NUM_VOICES; v++) {
-    voices[v].osc.setTable(SIN2048_DATA); // Assign the sine table
+    voices[v].osc.setTable(TRIANGLE2048_DATA); // Assign the triangle table
     voices[v].osc.setFreq(noteFreqs[v]);
     voices[v].env.setTimes(40, 120, 50000, 250);
     voices[v].env.setADLevels(255, 200);
