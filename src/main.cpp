@@ -77,7 +77,7 @@ void setupKickPatch() {
   e.freq_coefs[COEF_EG1] = 2.0f;    // Pitch sweep depth: +3.5 octaves
 
   e.eg1_times[0] = 0;
-  e.eg1_values[0] = 1.0f; // Start at max pitch sweep
+  e.eg1_values[0] = 1.5f; // Start at max pitch sweep
   e.eg1_times[1] = 40;
   e.eg1_values[1] = 0.0f; // Rapid pitch decay in 40ms
   e.eg1_times[2] = 0;

@@ -16,13 +16,13 @@ static constexpr int AUDIO_BUFFER_SAMPLES = 256; // Frames per DMA write
 
 // ── Sequencer Configurations
 // ──────────────────────────────────────────────────
-#define DEFAULT_BPM 144.0f
+#define DEFAULT_BPM 300.0f
 
 // ── Voice Gain Parameters
 // ──────────────────────────────────────────────────
 #define KICK_GAIN 1.0f
 #define SNARE_GAIN 0.5f
-#define HIHAT_GAIN 0.8f
+#define HIHAT_GAIN 1.0f
 
 // ── Hardware: NeoPixel LED
 // ──────────────────────────────────────────────────── Built-in WS2812 on the
