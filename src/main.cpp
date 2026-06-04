@@ -35,7 +35,7 @@ void setup() {
   amy_config.i2s_din = -1;
   amy_config.audio = AMY_AUDIO_IS_I2S;
   amy_config.features.default_synths =
-      1; // Enable default Juno-6 / GM drum patches
+      0; // Do NOT auto-load defaults: alloc_osc() crashes before pool is ready
 
   // 2. Start AMY engine (this launches background rendering task)
   amy_start(amy_config);
