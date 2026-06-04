@@ -232,6 +232,10 @@ void drumMachineUpdate() {
         ledG = 0.0f;
         ledB = 150.0f;
       }
+
+      if (stateChangeCallback) {
+        stateChangeCallback();
+      }
     }
   }
 
@@ -370,4 +374,31 @@ float drumMachineGetBPM() {
 
 uint8_t drumMachineGetStep() {
   return triggeredStep;
+}
+
+uint8_t drumMachineGetSelectedVoice() {
+  return selectedVoice;
+}
+
+void drumMachineSetSelectedVoice(uint8_t voice) {
+  if (voice < NUM_DRUM_VOICES) {
+    selectedVoice = voice;
+    // Flash LED to confirm selection
+    if (selectedVoice == 0) {
+      ledR = 150.0f;
+      ledG = 0.0f;
+      ledB = 0.0f;
+    } else if (selectedVoice == 1) {
+      ledR = 0.0f;
+      ledG = 150.0f;
+      ledB = 0.0f;
+    } else {
+      ledR = 20.0f;
+      ledG = 0.0f;
+      ledB = 150.0f;
+    }
+    if (stateChangeCallback) {
+      stateChangeCallback();
+    }
+  }
 }

@@ -27,6 +27,8 @@ const char*  drumMachineGetVoiceName(uint8_t voice);
 const bool*  drumMachineGetSteps(uint8_t voice);    // ptr to NUM_STEPS element array
 float        drumMachineGetBPM();
 uint8_t      drumMachineGetStep(); // Current playhead step
+uint8_t      drumMachineGetSelectedVoice();
+void         drumMachineSetSelectedVoice(uint8_t voice);
 
 // AMY ISR Sequencer Hook function
 void my_sequencer_hook(uint32_t tick_count);

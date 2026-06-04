@@ -22,21 +22,22 @@ void sendState(AsyncWebSocketClient *client) {
   const bool* hihat = drumMachineGetSteps(2);
   int bpm = (int)drumMachineGetBPM();
   int step = (int)drumMachineGetStep();
+  int selectedVoice = (int)drumMachineGetSelectedVoice();
 
-  char buf[256];
+  char buf[288];
   snprintf(buf, sizeof(buf),
            "{\"type\":\"state\","
            "\"kick\":[%d,%d,%d,%d,%d,%d,%d,%d],"
            "\"snare\":[%d,%d,%d,%d,%d,%d,%d,%d],"
            "\"hihat\":[%d,%d,%d,%d,%d,%d,%d,%d],"
-           "\"bpm\":%d,\"step\":%d}",
+           "\"bpm\":%d,\"step\":%d,\"selectedVoice\":%d}",
            kick ? kick[0] : 0, kick ? kick[1] : 0, kick ? kick[2] : 0, kick ? kick[3] : 0,
            kick ? kick[4] : 0, kick ? kick[5] : 0, kick ? kick[6] : 0, kick ? kick[7] : 0,
            snare ? snare[0] : 0, snare ? snare[1] : 0, snare ? snare[2] : 0, snare ? snare[3] : 0,
            snare ? snare[4] : 0, snare ? snare[5] : 0, snare ? snare[6] : 0, snare ? snare[7] : 0,
            hihat ? hihat[0] : 0, hihat ? hihat[1] : 0, hihat ? hihat[2] : 0, hihat ? hihat[3] : 0,
            hihat ? hihat[4] : 0, hihat ? hihat[5] : 0, hihat ? hihat[6] : 0, hihat ? hihat[7] : 0,
-           bpm, step);
+           bpm, step, selectedVoice);
   if (client) {
     client->text(buf);
   } else {
@@ -95,6 +96,17 @@ static void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
             drumMachineSetBPM((float)bpm);
             Serial.printf("WS BPM changed to %d\n", bpm);
             sendState(); // Broadcast new BPM
+          }
+        }
+      } else if (msg.indexOf("\"select_voice\"") >= 0) {
+        // Parse voice from: {"type":"select_voice","voice":1}
+        int vi = msg.indexOf("\"voice\":");
+        if (vi >= 0) {
+          int voice = msg.substring(vi + 8).toInt();
+          if (voice >= 0 && voice < drumMachineGetNumVoices()) {
+            drumMachineSetSelectedVoice(voice);
+            Serial.printf("WS select_voice: voice=%d\n", voice);
+            sendState(); // Broadcast updated state (including selectedVoice) to all
           }
         }
       } else if (msg.indexOf("\"get_state\"") >= 0) {
