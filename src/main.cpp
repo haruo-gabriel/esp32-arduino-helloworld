@@ -8,8 +8,9 @@
 // Sequencer active step grids (8 steps per voice)
 static bool hihatSteps[NUM_VOICES] = {false};
 static bool kickSteps[NUM_VOICES] = {false};
+static bool snareSteps[NUM_VOICES] = {false};
 
-// Currently selected voice for editing (0 = Hi-Hat, 1 = Kick)
+// Currently selected voice for editing (0 = Kick, 1 = Snare, 2 = Hi-Hat)
 static uint8_t selectedVoice = 0;
 
 // Thread-safe volatile flags for step boundary synchronization
@@ -87,6 +88,28 @@ void setupKickPatch() {
   Serial.println("Synthesized kick patch configured on oscillator 1.");
 }
 
+// Configure AMY oscillator 2 to synthesize an analog-style snare drum
+void setupSnarePatch() {
+  amy_event e = amy_default_event();
+  e.osc = 2;
+  e.wave = NOISE;
+  e.amp_coefs[COEF_CONST] = 0.0f; // Base amplitude is 0
+  e.amp_coefs[COEF_EG0] = 1.0f;   // Amplitude modulated by Envelope 0
+
+  // EG0: Exponential decay for a snare sound (250ms decay based on example docs)
+  e.eg0_times[0] = 0;
+  e.eg0_values[0] = 1.0f; // Instant attack (1.0 level)
+  e.eg0_times[1] = 250;
+  e.eg0_values[1] = 0.0f; // Decay to 0.0 in 250ms
+  e.eg0_times[2] = 0;
+  e.eg0_values[2] = 0.0f; // End breakpoint
+  e.bp_is_set[0] = 1;     // Enable EG0
+
+  amy_add_event(&e);
+  Serial.println("Synthesized snare patch configured on oscillator 2.");
+}
+
+
 // ─────────────────────────────────────────────────────────────────────────────
 // setup()
 // ─────────────────────────────────────────────────────────────────────────────
@@ -134,6 +157,7 @@ void setup() {
 
   setupHiHatPatch();
   setupKickPatch();
+  setupSnarePatch();
 
   // 4. Set the AMY sequencer tempo using the defined BPM
   e = amy_default_event();
@@ -184,22 +208,27 @@ void loop() {
 
     if (switcherReading == LOW) {
       // Switch the active voice sequencer
-      selectedVoice = (selectedVoice + 1) % 2;
+      selectedVoice = (selectedVoice + 1) % 3;
       Serial.printf("Switcher (GPIO %d) pressed → Selected Sequencer: %s\n",
                     SWITCHER_BUTTON_PIN,
-                    selectedVoice == 0 ? "HI-HAT" : "KICK");
+                    selectedVoice == 0 ? "KICK" : (selectedVoice == 1 ? "SNARE" : "HI-HAT"));
 
       // Flash LED to confirm selection
       if (selectedVoice == 0) {
-        // High blue/purple flash for Hi-Hat selection
-        ledR = 20.0f;
-        ledG = 0.0f;
-        ledB = 150.0f;
-      } else {
         // High red/orange flash for Kick selection
         ledR = 150.0f;
         ledG = 0.0f;
         ledB = 0.0f;
+      } else if (selectedVoice == 1) {
+        // High green flash for Snare selection
+        ledR = 0.0f;
+        ledG = 150.0f;
+        ledB = 0.0f;
+      } else {
+        // High blue/purple flash for Hi-Hat selection
+        ledR = 20.0f;
+        ledG = 0.0f;
+        ledB = 150.0f;
       }
     }
   }
@@ -218,27 +247,6 @@ void loop() {
 
       if (reading == LOW) {
         if (selectedVoice == 0) {
-          // Toggle Hi-Hat step state
-          hihatSteps[i] = !hihatSteps[i];
-          Serial.printf(
-              "Button %d (GPIO %d) pressed → Hi-Hat Step %d toggled %s\n",
-              i + 1, BUTTON_PINS[i], i + 1, hihatSteps[i] ? "ON" : "OFF");
-
-          // Update the sequencer event in AMY
-          amy_event e = amy_default_event();
-          e.sequence[SEQUENCE_TAG] = i; // tags 0-7 for hi-hat
-          if (hihatSteps[i]) {
-            e.sequence[SEQUENCE_PERIOD] = 192; // 8 steps * 24 ticks
-            e.sequence[SEQUENCE_TICK] = i * 24;
-            e.osc = 0; // Trigger hi-hat on oscillator 0
-            e.velocity = 1.0f;
-          } else {
-            // Setting period and tick to 0 removes the event from the sequencer
-            e.sequence[SEQUENCE_PERIOD] = 0;
-            e.sequence[SEQUENCE_TICK] = 0;
-          }
-          amy_add_event(&e);
-        } else {
           // Toggle Kick step state
           kickSteps[i] = !kickSteps[i];
           Serial.printf(
@@ -252,6 +260,48 @@ void loop() {
             e.sequence[SEQUENCE_PERIOD] = 192; // 8 steps * 24 ticks
             e.sequence[SEQUENCE_TICK] = i * 24;
             e.osc = 1; // Trigger kick on oscillator 1
+            e.velocity = 1.0f;
+          } else {
+            // Setting period and tick to 0 removes the event from the sequencer
+            e.sequence[SEQUENCE_PERIOD] = 0;
+            e.sequence[SEQUENCE_TICK] = 0;
+          }
+          amy_add_event(&e);
+        } else if (selectedVoice == 1) {
+          // Toggle Snare step state
+          snareSteps[i] = !snareSteps[i];
+          Serial.printf(
+              "Button %d (GPIO %d) pressed → Snare Step %d toggled %s\n", i + 1,
+              BUTTON_PINS[i], i + 1, snareSteps[i] ? "ON" : "OFF");
+
+          // Update the sequencer event in AMY
+          amy_event e = amy_default_event();
+          e.sequence[SEQUENCE_TAG] = i + 16; // tags 16-23 for snare
+          if (snareSteps[i]) {
+            e.sequence[SEQUENCE_PERIOD] = 192; // 8 steps * 24 ticks
+            e.sequence[SEQUENCE_TICK] = i * 24;
+            e.osc = 2; // Trigger snare on oscillator 2
+            e.velocity = 1.0f;
+          } else {
+            // Setting period and tick to 0 removes the event from the sequencer
+            e.sequence[SEQUENCE_PERIOD] = 0;
+            e.sequence[SEQUENCE_TICK] = 0;
+          }
+          amy_add_event(&e);
+        } else {
+          // Toggle Hi-Hat step state
+          hihatSteps[i] = !hihatSteps[i];
+          Serial.printf(
+              "Button %d (GPIO %d) pressed → Hi-Hat Step %d toggled %s\n",
+              i + 1, BUTTON_PINS[i], i + 1, hihatSteps[i] ? "ON" : "OFF");
+
+          // Update the sequencer event in AMY
+          amy_event e = amy_default_event();
+          e.sequence[SEQUENCE_TAG] = i; // tags 0-7 for hi-hat
+          if (hihatSteps[i]) {
+            e.sequence[SEQUENCE_PERIOD] = 192; // 8 steps * 24 ticks
+            e.sequence[SEQUENCE_TICK] = i * 24;
+            e.osc = 0; // Trigger hi-hat on oscillator 0
             e.velocity = 1.0f;
           } else {
             // Setting period and tick to 0 removes the event from the sequencer
@@ -276,14 +326,31 @@ void loop() {
     if (step < NUM_VOICES) {
       const bool hh = hihatSteps[step];
       const bool kick = kickSteps[step];
-      if (hh && kick) {
+      const bool snare = snareSteps[step];
+      if (kick && snare && hh) {
+        ledR = 80.0f;
+        ledG = 80.0f;
+        ledB = 80.0f;
+      } else if (kick && snare) {
+        ledR = 80.0f;
+        ledG = 0.0f;
+        ledB = 40.0f;
+      } else if (kick && hh) {
         ledR = 80.0f;
         ledG = 30.0f;
+        ledB = 80.0f;
+      } else if (snare && hh) {
+        ledR = 0.0f;
+        ledG = 40.0f;
         ledB = 80.0f;
       } else if (kick) {
         ledR = 80.0f;
         ledG = 15.0f;
         ledB = 0.0f;
+      } else if (snare) {
+        ledR = 0.0f;
+        ledG = 80.0f;
+        ledB = 80.0f;
       } else if (hh) {
         ledR = 40.0f;
         ledG = 0.0f;
