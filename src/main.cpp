@@ -21,19 +21,20 @@
 
 #define NUM_VOICES 8
 
-// Frequencies for notes (C4, D4, E4, F4, G4, A4, B4, C5)
+// Frequencies for notes of the Double Harmonic Major scale in C
 #define NOTE_C4_FREQ 261.63f
-#define NOTE_D4_FREQ 293.66f
+#define NOTE_DB4_FREQ 277.18f
 #define NOTE_E4_FREQ 329.63f
 #define NOTE_F4_FREQ 349.23f
 #define NOTE_G4_FREQ 392.00f
-#define NOTE_A4_FREQ 440.00f
+#define NOTE_AB4_FREQ 415.30f
 #define NOTE_B4_FREQ 493.88f
 #define NOTE_C5_FREQ 523.25f
 
 // Map arrays for pins and frequencies
 const int buttonPins[NUM_VOICES] = {BTN_1, BTN_2, BTN_3, BTN_4, BTN_5, BTN_6, BTN_7, BTN_8};
-const float noteFreqs[NUM_VOICES] = {NOTE_C4_FREQ, NOTE_D4_FREQ, NOTE_E4_FREQ, NOTE_F4_FREQ, NOTE_G4_FREQ, NOTE_A4_FREQ, NOTE_B4_FREQ, NOTE_C5_FREQ};
+const float noteFreqs[NUM_VOICES] = {NOTE_C4_FREQ, NOTE_DB4_FREQ, NOTE_E4_FREQ, NOTE_F4_FREQ, NOTE_G4_FREQ, NOTE_AB4_FREQ, NOTE_B4_FREQ, NOTE_C5_FREQ};
+
 
 // Struct to represent a synthesizer voice
 struct Voice {
