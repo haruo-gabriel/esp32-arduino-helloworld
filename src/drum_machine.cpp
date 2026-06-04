@@ -2,6 +2,8 @@
 #include <Arduino.h>
 #include <AMY-Arduino.h>
 
+extern void safe_amy_add_event(amy_event *e);
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Drum Machine Private State
 // ─────────────────────────────────────────────────────────────────────────────
@@ -47,8 +49,9 @@ static void setupHiHatPatch() {
   e.eg0_values[2] = 0.0f; // End breakpoint
   e.bp_is_set[0] = 1;     // Enable EG0
 
-  amy_add_event(&e);
+  safe_amy_add_event(&e);
   Serial.println("Synthesized hi-hat patch configured on oscillator 0.");
+
 }
 
 static void setupKickPatch() {
@@ -80,8 +83,9 @@ static void setupKickPatch() {
   e.eg1_values[2] = 0.0f; // End breakpoint
   e.bp_is_set[1] = 1;     // Enable EG1
 
-  amy_add_event(&e);
+  safe_amy_add_event(&e);
   Serial.println("Synthesized kick patch configured on oscillator 1.");
+
 }
 
 static void setupSnarePatch() {
@@ -100,8 +104,9 @@ static void setupSnarePatch() {
   e.eg0_values[2] = 0.0f; // End breakpoint
   e.bp_is_set[0] = 1;     // Enable EG0
 
-  amy_add_event(&e);
+  safe_amy_add_event(&e);
   Serial.println("Synthesized snare patch configured on oscillator 2.");
+
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -121,8 +126,9 @@ static void updateAmyStepInternal(uint8_t voiceIdx, uint8_t step, bool active) {
     e.sequence[SEQUENCE_PERIOD] = 0;
     e.sequence[SEQUENCE_TICK] = 0;
   }
-  amy_add_event(&e);
+  safe_amy_add_event(&e);
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // AMY sequencer hook callback (called from hardware timer ISR context)
@@ -160,7 +166,7 @@ void drumMachineInit(StateChangeCb onState, PlayheadTickCb onTick) {
   // Reset the engine and initialize patch configurations
   amy_event e = amy_default_event();
   e.reset_osc = RESET_AMY;
-  amy_add_event(&e);
+  safe_amy_add_event(&e);
   delay(50); // Let the reset complete
 
   setupHiHatPatch();
@@ -170,8 +176,9 @@ void drumMachineInit(StateChangeCb onState, PlayheadTickCb onTick) {
   // Set the AMY sequencer tempo using the defined BPM
   e = amy_default_event();
   e.tempo = currentBPM;
-  amy_add_event(&e);
+  safe_amy_add_event(&e);
   Serial.printf("Sequencer tempo configured to %.1f BPM.\n", currentBPM);
+
 }
 
 void drumMachineUpdate() {
@@ -322,9 +329,6 @@ void drumMachineUpdate() {
   }
 
   rgbLedWrite(LED_PIN, (uint8_t)ledR, (uint8_t)ledG, (uint8_t)ledB);
-
-  // Call AMY update function to run the sequencer and event queue processing
-  amy_update();
 }
 
 void drumMachineSetStep(uint8_t voice, uint8_t step, bool active) {
@@ -346,8 +350,9 @@ void drumMachineSetBPM(float bpm) {
     currentBPM = bpm;
     amy_event e = amy_default_event();
     e.tempo = currentBPM;
-    amy_add_event(&e);
+    safe_amy_add_event(&e);
   }
+
 }
 
 uint8_t drumMachineGetNumVoices() {
