@@ -16,7 +16,7 @@ static constexpr int AUDIO_BUFFER_SAMPLES = 256; // Frames per DMA write
 
 // ── Sequencer Configurations
 // ──────────────────────────────────────────────────
-#define DEFAULT_BPM 300.0f
+#define DEFAULT_BPM 120.0f
 
 // ── Voice Gain Parameters
 // ──────────────────────────────────────────────────

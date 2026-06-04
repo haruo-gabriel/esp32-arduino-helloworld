@@ -1,0 +1,152 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,user-scalable=no">
+<title>Drum Sequencer</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#000;color:#fff;font-family:-apple-system,system-ui,sans-serif;
+  display:flex;flex-direction:column;align-items:center;min-height:100vh;padding:16px}
+header{width:100%;max-width:480px;display:flex;justify-content:space-between;
+  align-items:center;padding:12px 0;border-bottom:1px solid #333;margin-bottom:20px}
+h1{font-size:18px;font-weight:600;letter-spacing:1px}
+#status{width:10px;height:10px;border-radius:50%;background:#555}
+#status.on{background:#4caf50}
+.voice-row{width:100%;max-width:480px;margin-bottom:16px}
+.voice-label{font-size:11px;font-weight:700;letter-spacing:2px;
+  text-transform:uppercase;margin-bottom:6px;color:#aaa}
+.steps{display:grid;grid-template-columns:repeat(8,1fr);gap:6px}
+.step{aspect-ratio:1;border:2px solid #444;border-radius:4px;
+  background:transparent;cursor:pointer;position:relative;
+  min-width:0;min-height:48px;-webkit-tap-highlight-color:transparent}
+.step.active{background:#fff;border-color:#fff}
+.step.playhead{border-color:#888;box-shadow:0 0 0 2px #888}
+.step.active.playhead{box-shadow:0 0 0 2px #fff}
+.bpm-section{width:100%;max-width:480px;display:flex;align-items:center;
+  justify-content:center;gap:16px;margin-top:12px;padding-top:16px;border-top:1px solid #333}
+.bpm-btn{width:48px;height:48px;border:2px solid #444;border-radius:4px;
+  background:transparent;color:#fff;font-size:24px;cursor:pointer;
+  display:flex;align-items:center;justify-content:center;-webkit-tap-highlight-color:transparent}
+.bpm-btn:active{background:#333}
+#bpm-display{font-size:24px;font-weight:700;min-width:80px;text-align:center}
+#bpm-label{font-size:11px;color:#aaa;letter-spacing:2px}
+</style>
+</head>
+<body>
+<header>
+  <h1>DRUM SEQUENCER</h1>
+  <div id="status"></div>
+</header>
+
+<div class="voice-row" id="row-kick">
+  <div class="voice-label">KICK</div>
+  <div class="steps" id="steps-kick"></div>
+</div>
+<div class="voice-row" id="row-snare">
+  <div class="voice-label">SNARE</div>
+  <div class="steps" id="steps-snare"></div>
+</div>
+<div class="voice-row" id="row-hihat">
+  <div class="voice-label">HIHAT</div>
+  <div class="steps" id="steps-hihat"></div>
+</div>
+
+<div class="bpm-section">
+  <button class="bpm-btn" id="bpm-down">&minus;</button>
+  <div>
+    <div id="bpm-display">300</div>
+    <div id="bpm-label">BPM</div>
+  </div>
+  <button class="bpm-btn" id="bpm-up">+</button>
+</div>
+
+<script>
+var ws,state={kick:[0,0,0,0,0,0,0,0],snare:[0,0,0,0,0,0,0,0],
+  hihat:[0,0,0,0,0,0,0,0],bpm:300,step:-1};
+var voices=["kick","snare","hihat"];
+var voiceIdx={kick:0,snare:1,hihat:2};
+
+function init(){
+  voices.forEach(function(v){
+    var c=document.getElementById("steps-"+v);
+    for(var i=0;i<8;i++){
+      var d=document.createElement("div");
+      d.className="step";
+      d.dataset.voice=v;
+      d.dataset.step=i;
+      d.addEventListener("click",onStep);
+      c.appendChild(d);
+    }
+  });
+  document.getElementById("bpm-down").addEventListener("click",function(){changeBpm(-10)});
+  document.getElementById("bpm-up").addEventListener("click",function(){changeBpm(10)});
+  connect();
+}
+
+function connect(){
+  var h=location.hostname||"192.168.1.1";
+  ws=new WebSocket("ws://"+h+"/ws");
+  ws.onopen=function(){
+    document.getElementById("status").classList.add("on");
+    ws.send(JSON.stringify({type:"get_state"}));
+  };
+  ws.onclose=function(){
+    document.getElementById("status").classList.remove("on");
+    setTimeout(connect,2000);
+  };
+  ws.onerror=function(){ws.close()};
+  ws.onmessage=function(e){
+    var m=JSON.parse(e.data);
+    if(m.type==="state"){
+      state.kick=m.kick;state.snare=m.snare;state.hihat=m.hihat;
+      state.bpm=m.bpm;
+      if(typeof m.step==="number")state.step=m.step;
+      render();
+    }else if(m.type==="step"){
+      state.step=m.index;
+      renderPlayhead();
+    }
+  };
+}
+
+function onStep(e){
+  var v=e.currentTarget.dataset.voice;
+  var s=parseInt(e.currentTarget.dataset.step);
+  state[v][s]=state[v][s]?0:1;
+  render();
+  if(ws&&ws.readyState===1){
+    ws.send(JSON.stringify({type:"toggle",voice:voiceIdx[v],step:s}));
+  }
+}
+
+function changeBpm(d){
+  state.bpm=Math.max(60,Math.min(600,state.bpm+d));
+  document.getElementById("bpm-display").textContent=state.bpm;
+  if(ws&&ws.readyState===1){
+    ws.send(JSON.stringify({type:"bpm",value:state.bpm}));
+  }
+}
+
+function render(){
+  voices.forEach(function(v){
+    var pads=document.getElementById("steps-"+v).children;
+    for(var i=0;i<8;i++){
+      pads[i].classList.toggle("active",!!state[v][i]);
+    }
+  });
+  document.getElementById("bpm-display").textContent=state.bpm;
+  renderPlayhead();
+}
+
+function renderPlayhead(){
+  var all=document.querySelectorAll(".step");
+  for(var i=0;i<all.length;i++){
+    all[i].classList.toggle("playhead",parseInt(all[i].dataset.step)===state.step);
+  }
+}
+
+init();
+</script>
+</body>
+</html>

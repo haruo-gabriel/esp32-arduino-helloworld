@@ -1,6 +1,16 @@
 #include "synth_config.h"
+#include "wifi_config.h"
 #include <AMY-Arduino.h>
 #include <Arduino.h>
+#include <ESPAsyncWebServer.h>
+#include <LittleFS.h>
+#include <WiFi.h>
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Web Server & WebSocket
+// ─────────────────────────────────────────────────────────────────────────────
+AsyncWebServer server(80);
+AsyncWebSocket ws("/ws");
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Sequencer State & Hook variables
@@ -10,6 +20,9 @@ static bool hihatSteps[NUM_VOICES] = {false};
 static bool kickSteps[NUM_VOICES] = {false};
 static bool snareSteps[NUM_VOICES] = {false};
 
+// Current BPM (mutable from web UI)
+static float currentBPM = DEFAULT_BPM;
+
 // Currently selected voice for editing (0 = Kick, 1 = Snare, 2 = Hi-Hat)
 static uint8_t selectedVoice = 0;
 
@@ -17,7 +30,152 @@ static uint8_t selectedVoice = 0;
 volatile bool stepTriggered = false;
 volatile uint8_t triggeredStep = 0;
 
-// Callback triggered by AMY's background hardware timer clock
+// ─────────────────────────────────────────────────────────────────────────────
+// WebSocket helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Build a JSON state string and send it to a specific client (or broadcast)
+void sendState(AsyncWebSocketClient *client = nullptr) {
+  char buf[256];
+  snprintf(buf, sizeof(buf),
+           "{\"type\":\"state\","
+           "\"kick\":[%d,%d,%d,%d,%d,%d,%d,%d],"
+           "\"snare\":[%d,%d,%d,%d,%d,%d,%d,%d],"
+           "\"hihat\":[%d,%d,%d,%d,%d,%d,%d,%d],"
+           "\"bpm\":%d,\"step\":%d}",
+           kickSteps[0], kickSteps[1], kickSteps[2], kickSteps[3],
+           kickSteps[4], kickSteps[5], kickSteps[6], kickSteps[7],
+           snareSteps[0], snareSteps[1], snareSteps[2], snareSteps[3],
+           snareSteps[4], snareSteps[5], snareSteps[6], snareSteps[7],
+           hihatSteps[0], hihatSteps[1], hihatSteps[2], hihatSteps[3],
+           hihatSteps[4], hihatSteps[5], hihatSteps[6], hihatSteps[7],
+           (int)currentBPM, (int)triggeredStep);
+  if (client) {
+    client->text(buf);
+  } else {
+    ws.textAll(buf);
+  }
+}
+
+// Send playhead position to all connected clients
+void sendPlayhead(uint8_t step) {
+  char buf[32];
+  snprintf(buf, sizeof(buf), "{\"type\":\"step\",\"index\":%d}", step);
+  ws.textAll(buf);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AMY sequencer event helpers
+// ─────────────────────────────────────────────────────────────────────────────
+
+// Update an AMY sequencer event for a given voice and step
+void updateAmyStep(int voiceType, int step, bool active) {
+  amy_event e = amy_default_event();
+
+  if (voiceType == 0) {
+    // Kick — oscillator 1, tags 8-15
+    e.sequence[SEQUENCE_TAG] = step + 8;
+    if (active) {
+      e.sequence[SEQUENCE_PERIOD] = 192;
+      e.sequence[SEQUENCE_TICK] = step * 24;
+      e.osc = 1;
+      e.velocity = KICK_GAIN;
+    } else {
+      e.sequence[SEQUENCE_PERIOD] = 0;
+      e.sequence[SEQUENCE_TICK] = 0;
+    }
+  } else if (voiceType == 1) {
+    // Snare — oscillator 2, tags 16-23
+    e.sequence[SEQUENCE_TAG] = step + 16;
+    if (active) {
+      e.sequence[SEQUENCE_PERIOD] = 192;
+      e.sequence[SEQUENCE_TICK] = step * 24;
+      e.osc = 2;
+      e.velocity = SNARE_GAIN;
+    } else {
+      e.sequence[SEQUENCE_PERIOD] = 0;
+      e.sequence[SEQUENCE_TICK] = 0;
+    }
+  } else {
+    // Hi-Hat — oscillator 0, tags 0-7
+    e.sequence[SEQUENCE_TAG] = step;
+    if (active) {
+      e.sequence[SEQUENCE_PERIOD] = 192;
+      e.sequence[SEQUENCE_TICK] = step * 24;
+      e.osc = 0;
+      e.velocity = HIHAT_GAIN;
+    } else {
+      e.sequence[SEQUENCE_PERIOD] = 0;
+      e.sequence[SEQUENCE_TICK] = 0;
+    }
+  }
+
+  amy_add_event(&e);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// WebSocket event handler
+// ─────────────────────────────────────────────────────────────────────────────
+void onWsEvent(AsyncWebSocket *server, AsyncWebSocketClient *client,
+               AwsEventType type, void *arg, uint8_t *data, size_t len) {
+  if (type == WS_EVT_CONNECT) {
+    Serial.printf("WebSocket client #%u connected from %s\n", client->id(),
+                  client->remoteIP().toString().c_str());
+    sendState(client);
+  } else if (type == WS_EVT_DISCONNECT) {
+    Serial.printf("WebSocket client #%u disconnected\n", client->id());
+  } else if (type == WS_EVT_DATA) {
+    AwsFrameInfo *info = (AwsFrameInfo *)arg;
+    if (info->final && info->index == 0 && info->len == len &&
+        info->opcode == WS_TEXT) {
+      data[len] = 0; // Null-terminate
+
+      // Minimal JSON parsing (avoid heavy library to save memory)
+      String msg = (char *)data;
+
+      if (msg.indexOf("\"toggle\"") >= 0) {
+        // Parse voice and step from: {"type":"toggle","voice":0,"step":3}
+        int vi = msg.indexOf("\"voice\":");
+        int si = msg.indexOf("\"step\":");
+        if (vi >= 0 && si >= 0) {
+          int voice = msg.substring(vi + 8).toInt();
+          int step = msg.substring(si + 7).toInt();
+          if (step >= 0 && step < NUM_VOICES) {
+            bool *steps = (voice == 0) ? kickSteps
+                          : (voice == 1) ? snareSteps
+                                         : hihatSteps;
+            steps[step] = !steps[step];
+            updateAmyStep(voice, step, steps[step]);
+            Serial.printf("WS toggle: voice=%d step=%d → %s\n", voice, step,
+                          steps[step] ? "ON" : "OFF");
+            sendState(); // Broadcast to all clients
+          }
+        }
+      } else if (msg.indexOf("\"bpm\"") >= 0 &&
+                 msg.indexOf("\"get_state\"") < 0) {
+        // Parse BPM from: {"type":"bpm","value":120}
+        int vi = msg.indexOf("\"value\":");
+        if (vi >= 0) {
+          int bpm = msg.substring(vi + 8).toInt();
+          if (bpm >= 60 && bpm <= 600) {
+            currentBPM = (float)bpm;
+            amy_event e = amy_default_event();
+            e.tempo = currentBPM;
+            amy_add_event(&e);
+            Serial.printf("WS BPM changed to %d\n", bpm);
+            sendState(); // Broadcast new BPM
+          }
+        }
+      } else if (msg.indexOf("\"get_state\"") >= 0) {
+        sendState(client);
+      }
+    }
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// AMY sequencer hook callback (called from hardware timer ISR context)
+// ─────────────────────────────────────────────────────────────────────────────
 void my_sequencer_hook(uint32_t tick_count) {
   // Each step represents an 8th note.
   // At 48 PPQ (ticks per quarter note), an 8th note is 24 ticks.
@@ -115,11 +273,35 @@ void setupSnarePatch() {
 // ─────────────────────────────────────────────────────────────────────────────
 void setup() {
   Serial.begin(115200);
-  delay(1000);
-  Serial.println("ESP32-S3 AMY Sequencer Starting...");
+  // Wait up to 4 seconds for native USB CDC serial port to connect
+  while (!Serial && millis() < 4000) {
+    delay(10);
+  }
+  Serial.println("\nESP32-S3 AMY Sequencer Starting...");
 
   // NeoPixel Setup: start dark
   rgbLedWrite(LED_PIN, 0, 0, 0);
+
+  // ── WiFi Setup (Access Point Mode) ─────────────────────────────────────────
+  WiFi.mode(WIFI_AP);
+  WiFi.softAP("ESP32-Sequencer");
+  Serial.println("WiFi Access Point 'ESP32-Sequencer' started.");
+  Serial.printf("Connect your device to it and open: http://%s/\n",
+                WiFi.softAPIP().toString().c_str());
+
+  // ── LittleFS Setup ───────────────────────────────────────────────────────
+  if (!LittleFS.begin(true)) {
+    Serial.println("LittleFS mount failed!");
+  } else {
+    Serial.println("LittleFS mounted.");
+  }
+
+  // ── Web Server Setup ─────────────────────────────────────────────────────
+  ws.onEvent(onWsEvent);
+  server.addHandler(&ws);
+  server.serveStatic("/", LittleFS, "/").setDefaultFile("index.html");
+  server.begin();
+  Serial.println("Web server started on port 80.");
 
   // Configure all step button pins with internal pull-up resistors
   for (int i = 0; i < NUM_VOICES; i++) {
@@ -161,9 +343,9 @@ void setup() {
 
   // 4. Set the AMY sequencer tempo using the defined BPM
   e = amy_default_event();
-  e.tempo = DEFAULT_BPM;
+  e.tempo = currentBPM;
   amy_add_event(&e);
-  Serial.printf("Sequencer tempo configured to %.1f BPM.\n", DEFAULT_BPM);
+  Serial.printf("Sequencer tempo configured to %.1f BPM.\n", currentBPM);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -254,64 +436,24 @@ void loop() {
           Serial.printf(
               "Button %d (GPIO %d) pressed → Kick Step %d toggled %s\n", i + 1,
               BUTTON_PINS[i], i + 1, kickSteps[i] ? "ON" : "OFF");
-
-          // Update the sequencer event in AMY
-          amy_event e = amy_default_event();
-          e.sequence[SEQUENCE_TAG] = i + 8; // tags 8-15 for kick
-          if (kickSteps[i]) {
-            e.sequence[SEQUENCE_PERIOD] = 192; // 8 steps * 24 ticks
-            e.sequence[SEQUENCE_TICK] = i * 24;
-            e.osc = 1; // Trigger kick on oscillator 1
-            e.velocity = KICK_GAIN;
-          } else {
-            // Setting period and tick to 0 removes the event from the sequencer
-            e.sequence[SEQUENCE_PERIOD] = 0;
-            e.sequence[SEQUENCE_TICK] = 0;
-          }
-          amy_add_event(&e);
+          updateAmyStep(0, i, kickSteps[i]);
         } else if (selectedVoice == 1) {
           // Toggle Snare step state
           snareSteps[i] = !snareSteps[i];
           Serial.printf(
-              "Button %d (GPIO %d) pressed → Snare Step %d toggled %s\n", i + 1,
-              BUTTON_PINS[i], i + 1, snareSteps[i] ? "ON" : "OFF");
-
-          // Update the sequencer event in AMY
-          amy_event e = amy_default_event();
-          e.sequence[SEQUENCE_TAG] = i + 16; // tags 16-23 for snare
-          if (snareSteps[i]) {
-            e.sequence[SEQUENCE_PERIOD] = 192; // 8 steps * 24 ticks
-            e.sequence[SEQUENCE_TICK] = i * 24;
-            e.osc = 2; // Trigger snare on oscillator 2
-            e.velocity = SNARE_GAIN;
-          } else {
-            // Setting period and tick to 0 removes the event from the sequencer
-            e.sequence[SEQUENCE_PERIOD] = 0;
-            e.sequence[SEQUENCE_TICK] = 0;
-          }
-          amy_add_event(&e);
+              "Button %d (GPIO %d) pressed → Snare Step %d toggled %s\n",
+              i + 1, BUTTON_PINS[i], i + 1, snareSteps[i] ? "ON" : "OFF");
+          updateAmyStep(1, i, snareSteps[i]);
         } else {
           // Toggle Hi-Hat step state
           hihatSteps[i] = !hihatSteps[i];
           Serial.printf(
               "Button %d (GPIO %d) pressed → Hi-Hat Step %d toggled %s\n",
               i + 1, BUTTON_PINS[i], i + 1, hihatSteps[i] ? "ON" : "OFF");
-
-          // Update the sequencer event in AMY
-          amy_event e = amy_default_event();
-          e.sequence[SEQUENCE_TAG] = i; // tags 0-7 for hi-hat
-          if (hihatSteps[i]) {
-            e.sequence[SEQUENCE_PERIOD] = 192; // 8 steps * 24 ticks
-            e.sequence[SEQUENCE_TICK] = i * 24;
-            e.osc = 0; // Trigger hi-hat on oscillator 0
-            e.velocity = HIHAT_GAIN;
-          } else {
-            // Setting period and tick to 0 removes the event from the sequencer
-            e.sequence[SEQUENCE_PERIOD] = 0;
-            e.sequence[SEQUENCE_TICK] = 0;
-          }
-          amy_add_event(&e);
+          updateAmyStep(2, i, hihatSteps[i]);
         }
+        // Broadcast updated state to all WebSocket clients
+        sendState();
       }
     }
   }
@@ -325,6 +467,10 @@ void loop() {
   if (stepTriggered) {
     stepTriggered = false;
     uint8_t step = triggeredStep;
+
+    // Send playhead position to web clients
+    sendPlayhead(step);
+
     if (step < NUM_VOICES) {
       const bool hh = hihatSteps[step];
       const bool kick = kickSteps[step];
@@ -380,6 +526,9 @@ void loop() {
 
   // Call AMY update function to run the sequencer and event queue processing
   amy_update();
+
+  // Clean up disconnected WebSocket clients (prevents memory leaks)
+  ws.cleanupClients();
 
   // Maintain ~100 Hz loop rate
   delay(10);
