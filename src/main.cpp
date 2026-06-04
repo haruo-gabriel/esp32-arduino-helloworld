@@ -17,17 +17,23 @@
 #define BTN_5 8 
 #define BTN_6 3 
 #define BTN_7 46 
-#define BTN_9 9
+#define BTN_8 9
 
-// Frequencies for notes (C4, E4, G4, C5)
+#define NUM_VOICES 8
+
+// Frequencies for notes (C4, D4, E4, F4, G4, A4, B4, C5)
 #define NOTE_C4_FREQ 261.63f
+#define NOTE_D4_FREQ 293.66f
 #define NOTE_E4_FREQ 329.63f
+#define NOTE_F4_FREQ 349.23f
 #define NOTE_G4_FREQ 392.00f
+#define NOTE_A4_FREQ 440.00f
+#define NOTE_B4_FREQ 493.88f
 #define NOTE_C5_FREQ 523.25f
 
 // Map arrays for pins and frequencies
-const int buttonPins[4] = {BTN_1, BTN_2, BTN_3, BTN_4};
-const float noteFreqs[4] = {NOTE_C4_FREQ, NOTE_E4_FREQ, NOTE_G4_FREQ, NOTE_C5_FREQ};
+const int buttonPins[NUM_VOICES] = {BTN_1, BTN_2, BTN_3, BTN_4, BTN_5, BTN_6, BTN_7, BTN_8};
+const float noteFreqs[NUM_VOICES] = {NOTE_C4_FREQ, NOTE_D4_FREQ, NOTE_E4_FREQ, NOTE_F4_FREQ, NOTE_G4_FREQ, NOTE_A4_FREQ, NOTE_B4_FREQ, NOTE_C5_FREQ};
 
 // Struct to represent a synthesizer voice
 struct Voice {
@@ -35,13 +41,8 @@ struct Voice {
   ADSR<100, 44100> env;
 };
 
-// Instantiate 4 voices with the sine wavetable
-Voice voices[4] = {
-  { Oscil<SIN2048_NUM_CELLS, 44100>(SIN2048_DATA) },
-  { Oscil<SIN2048_NUM_CELLS, 44100>(SIN2048_DATA) },
-  { Oscil<SIN2048_NUM_CELLS, 44100>(SIN2048_DATA) },
-  { Oscil<SIN2048_NUM_CELLS, 44100>(SIN2048_DATA) }
-};
+// Instantiate voices using the default constructor (table will be assigned in setup)
+Voice voices[NUM_VOICES];
 
 // Instantiate a Mozzi oscillator running at 100 Hz update rate for the idle LED pulse.
 Oscil<SIN2048_NUM_CELLS, 100> ledOsc(SIN2048_DATA);
@@ -56,8 +57,8 @@ const int pin_sclk = 6;
 const int pin_sdin = 7; // Digital synth audio stream out to the Pmod DAC
 
 // Thread-safe communication flags
-volatile bool voiceTriggerOn[4] = {false, false, false, false};
-volatile bool voiceTriggerOff[4] = {false, false, false, false};
+volatile bool voiceTriggerOn[NUM_VOICES] = {false};
+volatile bool voiceTriggerOff[NUM_VOICES] = {false};
 volatile uint8_t currentEnvLevel = 0;
 
 // Background FreeRTOS task to synthesize audio samples in real-time
@@ -69,7 +70,7 @@ void audioTask(void *parameter) {
   while (true) {
     for (int i = 0; i < numSamples; i++) {
       // Execute thread-safe synth control triggers
-      for (int v = 0; v < 4; v++) {
+      for (int v = 0; v < NUM_VOICES; v++) {
         if (voiceTriggerOn[v]) {
           voiceTriggerOn[v] = false;
           voices[v].osc.setFreq(noteFreqs[v]);
@@ -86,7 +87,7 @@ void audioTask(void *parameter) {
       controlCounter++;
       if (controlCounter >= 441) {
         controlCounter = 0;
-        for (int v = 0; v < 4; v++) {
+        for (int v = 0; v < NUM_VOICES; v++) {
           voices[v].env.update();
         }
       }
@@ -95,7 +96,7 @@ void audioTask(void *parameter) {
       int32_t summedSample = 0;
       uint8_t maxEnv = 0;
       
-      for (int v = 0; v < 4; v++) {
+      for (int v = 0; v < NUM_VOICES; v++) {
         int16_t oscSample = voices[v].osc.next();
         uint8_t envLevel = voices[v].env.next();
         summedSample += (int32_t)oscSample * envLevel;
@@ -105,8 +106,8 @@ void audioTask(void *parameter) {
       }
       currentEnvLevel = maxEnv; // Share maximum envelope level with LED visualizer
 
-      // Scale by 60 to prevent clipping when multiple keys are pressed, divided by 256 for envelope scaling
-      int16_t sampleVal = (int16_t)((summedSample * 60) >> 8);
+      // Scale by 30 to prevent clipping when multiple keys are pressed, divided by 256 for envelope scaling
+      int16_t sampleVal = (int16_t)((summedSample * 30) >> 8);
 
       buffer[i * 2] = sampleVal;     // Left Channel
       buffer[i * 2 + 1] = sampleVal; // Right Channel
@@ -121,13 +122,13 @@ void setup() {
   // Initialize Serial for hardware debugging
   Serial.begin(115200);
   delay(1000); // Give serial monitor time to connect
-  Serial.println("ESP32-S3 Mozzi ADSR Polyphonic Synth Starting...");
+  Serial.println("ESP32-S3 Mozzi ADSR 8-Voice Polyphonic Synth Starting...");
 
   // WS2812 does not require pinMode configuration when using rgbLedWrite
   rgbLedWrite(LED_PIN, 0, 0, 0); // Start turned off
 
   // Setup button inputs with internal pull-up resistors
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < NUM_VOICES; i++) {
     pinMode(buttonPins[i], INPUT_PULLUP);
     Serial.printf("GPIO %d configured as INPUT_PULLUP\n", buttonPins[i]);
   }
@@ -135,8 +136,9 @@ void setup() {
   // Initialize the LED oscillator at 1 Hz frequency (1 cycle per second)
   ledOsc.setFreq(1);
 
-  // Set envelope parameters and frequencies for all voices
-  for (int v = 0; v < 4; v++) {
+  // Initialize wave table, frequencies, and envelope parameters for all voices
+  for (int v = 0; v < NUM_VOICES; v++) {
+    voices[v].osc.setTable(SIN2048_DATA); // Assign the sine table
     voices[v].osc.setFreq(noteFreqs[v]);
     voices[v].env.setTimes(40, 120, 50000, 250);
     voices[v].env.setADLevels(255, 200);
@@ -163,11 +165,11 @@ void setup() {
   }
 }
 
-int lastButtonStates[4] = {-1, -1, -1, -1};
+int lastButtonStates[NUM_VOICES] = {-1, -1, -1, -1, -1, -1, -1, -1};
 
 void loop() {
   // Poll each button state
-  for (int i = 0; i < 4; i++) {
+  for (int i = 0; i < NUM_VOICES; i++) {
     int currentPinState = digitalRead(buttonPins[i]);
 
     if (currentPinState != lastButtonStates[i]) {
